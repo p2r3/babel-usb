@@ -19,10 +19,18 @@ int init_tasks(void);
 
 void app_main(void)
 {
-    init_hardware();
-    init_software();
-    init_tasks();
+  init_hardware();
+  init_software();
+  init_tasks();
 }
 
 #include "monolith/usb_mtp_impl.c.h"
 #include "monolith/usb_descriptors.c.h"
+
+void TaskTinyusb(void *pvParameters)
+{
+  (void) pvParameters;
+  while (1) {
+    tud_task();
+  }
+}
