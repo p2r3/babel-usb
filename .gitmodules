@@ -1,0 +1,4 @@
+[submodule "lib/espressif-tinyusb-component"]
+	path = lib/espressif-tinyusb-component
+	url = https://github.com/RigoLigoRLC/espressif-tinyusb-component
+	branch = v0.18-with-mtp
