@@ -529,7 +529,7 @@ int32_t tud_mtp_data_xfer_cb(tud_mtp_cb_data_t* cb_data) {
     }
   }
 
-  return 0;
+  return resp_code;
 }
 
 int32_t tud_mtp_data_complete_cb(tud_mtp_cb_data_t* cb_data) {
@@ -564,6 +564,9 @@ int32_t tud_mtp_response_complete_cb(tud_mtp_cb_data_t* cb_data) {
   return 0; // nothing to do
 }
 
+// char babel_log[16384] = {0};
+// char babel_log[16384] = "Hello, world\n\0";
+
 //--------------------------------------------------------------------+
 // File System Handlers
 //--------------------------------------------------------------------+
@@ -584,6 +587,26 @@ static int32_t fs_get_device_info(tud_mtp_cb_data_t* cb_data) {
   return 0;
 }
 
+#define BABEL_MAX_NAME_LENGTH 2
+#define BABEL_ALPHABET_LENGTH 70
+
+const char alphabet[BABEL_ALPHABET_LENGTH] = {
+  'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+  'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+  'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+  'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
+  'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+  'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+  'w', 'x', 'y', 'z', '0', '1', '2', '3',
+  '4', '5', '6', '7', '8', '9', '!', ' ',
+  '&', '(', ')', '-', '_', '+', '[', ']',
+  '^', '='
+};
+
+uint8_t output_file[4096] = {0};
+size_t output_file_len = 0;
+uint32_t handle_count = 0;
+
 static int32_t fs_open_close_session(tud_mtp_cb_data_t* cb_data) {
   const mtp_container_command_t* command = cb_data->command_container;
   if (command->header.code == MTP_OP_OPEN_SESSION) {
@@ -591,6 +614,17 @@ static int32_t fs_open_close_session(tud_mtp_cb_data_t* cb_data) {
       return MTP_RESP_SESSION_ALREADY_OPEN;
     }
     is_session_opened = true;
+
+    if (!handle_count) {
+      // Calculate total amount of objects (files/folders) in directory
+      for (int i = 0; i < BABEL_MAX_NAME_LENGTH; i++) {
+        uint32_t term = 1;
+        for (int j = 0; j <= i; j++) term *= BABEL_ALPHABET_LENGTH;
+        handle_count += term;
+      }
+    }
+
+    output_file_len = 0;
 
     // Upon session open, we regenerate the handle table
     // fs_handletable_regenerate(&handle_table);
@@ -669,21 +703,34 @@ static int32_t fs_get_device_properties(tud_mtp_cb_data_t* cb_data) {
   return 0;
 }
 
-#define BABEL_MAX_NAME_LENGTH 2
-#define BABEL_ALPHABET_LENGTH 70
-
-const char alphabet[BABEL_ALPHABET_LENGTH] = {
-  'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
-  'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
-  'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
-  'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
-  'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
-  'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
-  'w', 'x', 'y', 'z', '0', '1', '2', '3',
-  '4', '5', '6', '7', '8', '9', '!', ' ',
-  '&', '(', ')', '-', '_', '+', '[', ']',
-  '^', '='
-};
+void fs_append_output (uint32_t handle) {
+  uint32_t index = 0;
+  uint32_t carry = 0;
+  while (handle || carry) {
+    int value = (handle & 0xFF) + output_file[index] + carry;
+    output_file[index] = value & 0xFF;
+    carry = value > 0xFF;
+    handle >>= 8;
+    if (++index > output_file_len) {
+      output_file[index] = 0;
+      output_file_len = index;
+    }
+  }
+}
+void fs_reverse_output (uint32_t handle) {
+  uint32_t index = 0;
+  uint32_t carry = 0;
+  while (handle || carry) {
+    int value = output_file[index] - (handle & 0xFF) - carry;
+    output_file[index] = value < 0 ? 256 + value : value;
+    carry = value < 0;
+    handle >>= 8;
+    if (++index > output_file_len) {
+      output_file[index] = 0;
+      output_file_len = index;
+    }
+  }
+}
 
 static int32_t fs_get_object_handles(tud_mtp_cb_data_t* cb_data) {
   // `ls /<folder_in_question>`
@@ -692,43 +739,45 @@ static int32_t fs_get_object_handles(tud_mtp_cb_data_t* cb_data) {
 
   const uint32_t storage_id = command->params[0];
   const uint32_t obj_format = command->params[1]; // optional
+  const uint32_t parent_handle = command->params[2];
   (void)obj_format;
 
   if (storage_id != 0xFFFFFFFF && storage_id != SUPPORTED_STORAGE_ID) {
     return MTP_RESP_INVALID_STORAGE_ID;
   }
 
-  // Calculate total amount of objects (files/folders) in directory
-  uint32_t count = 0;
-  for (int i = 0; i < BABEL_MAX_NAME_LENGTH; i++) {
-    uint32_t term = 1;
-    for (int j = 0; j <= i; j++) term *= BABEL_ALPHABET_LENGTH;
-    count += term;
-  }
-
   if (cb_data->phase == MTP_PHASE_COMMAND) {
+
+    // snprintf(babel_log + strlen(babel_log), sizeof(babel_log), "get_obj_handles %lu\n", parent_handle);
+
+    if (parent_handle != 0xFFFFFFFF) {
+      fs_append_output(parent_handle - 1);
+    } else {
+      output_file_len = 0;
+    }
+
     // Payload space in the first packet (after the 12-byte container header)
     const uint32_t first_payload_bytes = io_container->payload_bytes;
 
     // Write the MTP array count field (4 bytes) into the payload
     uint32_t* p = (uint32_t*) io_container->payload;
-    *p++ = count;
+    *p++ = handle_count;
     io_container->header->len += 4;
 
     // Fill the remaining space in the first packet with as many handles as fit
-    const uint32_t first_batch = tu_min32(count, (first_payload_bytes - 4) / 4);
+    const uint32_t first_batch = tu_min32(handle_count, (first_payload_bytes - 4) / 4);
     for (uint32_t i = 0; i < first_batch; i++) {
       *p++ = i + 1;
     }
 
     // Declare length of full buffer to be streamed
-    io_container->header->len += count * 4;
+    io_container->header->len += handle_count * 4;
 
     tud_mtp_data_send(io_container);
   } else { // MTP_PHASE_DATA
     const uint32_t data_sent = cb_data->total_xferred_bytes - sizeof(mtp_container_header_t);
     const uint32_t handles_sent = (data_sent - 4) / 4; // how many handles already sent
-    const uint32_t handles_remaining = count - handles_sent;
+    const uint32_t handles_remaining = handle_count - handles_sent;
     const uint32_t handles_this_packet = tu_min32(handles_remaining, io_container->payload_bytes / 4);
 
     uint32_t* p = (uint32_t*) io_container->payload;
@@ -755,6 +804,10 @@ static int32_t fs_get_object_info(tud_mtp_cb_data_t* cb_data) {
   //   return MTP_RESP_INVALID_OBJECT_HANDLE;
   // }
 
+  // if (obj_handle == 1) {
+    // snprintf(babel_log + strlen(babel_log), sizeof(babel_log), "get_obj_info %lu\n", obj_handle);
+  // }
+
   char entry_name[BABEL_MAX_NAME_LENGTH + 1] = {0};
   bool entry_is_dir = false;
   fs_handle_t entry_parent = 0;
@@ -772,15 +825,14 @@ static int32_t fs_get_object_info(tud_mtp_cb_data_t* cb_data) {
     entry_is_dir = true;
   }
 
-  // Estimate file size from path length
-  uint32_t file_size = ((BABEL_MAX_NAME_LENGTH - (entry_name_ptr - entry_name))) * BABEL_ALPHABET_LENGTH / 256 + 1;
+  uint32_t file_size = output_file_len;
 
   uint16_t utf16_filename[MTP_FILENAME_LENGTH];
   size_t write_count = utf8_to_utf16((uint8_t *)entry_name_ptr, strlen(entry_name_ptr), utf16_filename, MTP_FILENAME_LENGTH);
   utf16_filename[TU_MIN(write_count, MTP_FILENAME_LENGTH)] = 0;
   mtp_object_info_header_t obj_info_header = {
       .storage_id = SUPPORTED_STORAGE_ID,
-      .object_format = entry_is_dir ? MTP_OBJ_FORMAT_ASSOCIATION : MTP_OBJ_FORMAT_UNDEFINED,
+      .object_format = entry_is_dir ? MTP_OBJ_FORMAT_ASSOCIATION : MTP_OBJ_FORMAT_TEXT,
       .protection_status = MTP_PROTECTION_STATUS_READ_ONLY,
       .object_compressed_size = file_size,
       .thumb_format = MTP_OBJ_FORMAT_UNDEFINED,
@@ -809,13 +861,9 @@ static int32_t fs_get_object(tud_mtp_cb_data_t* cb_data) {
   const mtp_container_command_t* command = cb_data->command_container;
   mtp_container_info_t* io_container = &cb_data->io_container;
   const uint32_t obj_handle = command->params[0];
-  // const FILE* f = fs_open_handle(&handle_table, obj_handle, "r");
-  // if (f == NULL) {
-  //   ESP_LOGE("MtpImpl", "%s: trying to open invalid handle %d", __func__, obj_handle);
-  //   return MTP_RESP_INVALID_OBJECT_HANDLE;
-  // }
 
   if (cb_data->phase == MTP_PHASE_COMMAND) {
+    // snprintf(babel_log + strlen(babel_log), sizeof(babel_log), "get_obj %lu\n", obj_handle);
     // If file contents is larger than CFG_TUD_MTP_EP_BUFSIZE, data may only partially is added here
     // the rest will be sent in tud_mtp_data_more_cb
     // Rants: TinyUSB MTP design is slightly annoying, it assumed your entire file to transfer is
@@ -828,31 +876,24 @@ static int32_t fs_get_object(tud_mtp_cb_data_t* cb_data) {
     // something back, we need to send metadata back, so if we read a whole packet it's definitely
     // not gonna fit in the MTP packet's remaining space if our file is larger than the free space,
     // and when the file's smaller than that we're totally fine then.
-    char first_time_buffer[CFG_TUD_MTP_EP_BUFSIZE];
-    // fread(first_time_buffer, 1, TU_MIN(CFG_TUD_MTP_EP_BUFSIZE, current_file_size), current_file);
-    uint32_t bytes_queued = mtp_container_add_raw(io_container, first_time_buffer, 0);
-    MTP_ESP_LOG("MtpImpl", "%s: responded %d bytes", __func__, bytes_queued);
+    fs_append_output(obj_handle - 1);
+    size_t file_size = output_file_len;
+    // Pass file_size (not first_chunk) so add_raw records the full transfer length in header->len,
+    // even though it only copies min(file_size, remaining_buf) bytes into the packet buffer.
+    uint32_t bytes_queued = mtp_container_add_raw(io_container, output_file, file_size);
+    if (bytes_queued >= output_file_len) {
+      fs_reverse_output(obj_handle - 1);
+    }
     tud_mtp_data_send(io_container);
   } else if (cb_data->phase == MTP_PHASE_DATA) {
     // continue sending remaining data: file contents offset is xferred byte minus header size
     const uint32_t offset = cb_data->total_xferred_bytes - sizeof(mtp_container_header_t);
-    const uint32_t xact_len = tu_min32(current_file_size - offset, io_container->payload_bytes);
-    if (xact_len > 0) {
-      fseek(current_file, offset, SEEK_SET);
-      uint8_t *write_ptr = io_container->payload;
-      uint32_t remaining_len = xact_len;
-      while (remaining_len) {
-        size_t bytes_read = fread(write_ptr, 1, remaining_len, current_file);
-        remaining_len -= bytes_read;
-        write_ptr += bytes_read;
-        MTP_ESP_LOG("MtpImpl", "%s: fread read %d bytes, %d left", __func__, bytes_read, remaining_len);
-      }
-      tud_mtp_data_send(io_container);
-      MTP_ESP_LOG("MtpImpl", "%s: responded %d bytes at %d", __func__, xact_len, offset);
-    }
-    if (offset + xact_len >= current_file_size) {
-      // fs_close_handle(obj_handle, current_file);
-      MTP_ESP_LOG("MtpImpl", "File read completed, closing");
+    const uint32_t xact_len = tu_min32(output_file_len - offset, io_container->payload_bytes);
+    uint8_t *write_ptr = io_container->payload;
+    memcpy(write_ptr, output_file + offset, xact_len);
+    tud_mtp_data_send(io_container);
+    if (offset + xact_len >= output_file_len) {
+      fs_reverse_output(obj_handle - 1);
     }
   }
 
