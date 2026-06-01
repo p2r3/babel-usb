@@ -629,6 +629,7 @@ static int32_t fs_open_close_session(tud_mtp_cb_data_t* cb_data) {
     }
 
     output_file_len = 0;
+    output_file[0] = 0;
 
     // Upon session open, we regenerate the handle table
     // fs_handletable_regenerate(&handle_table);
@@ -850,6 +851,7 @@ static int32_t fs_get_object_handles(tud_mtp_cb_data_t* cb_data) {
     } else {
       // snprintf(babel_log + strlen(babel_log), sizeof(babel_log), "get_obj_handles 0\n");
       output_file_len = 0;
+      output_file[0] = 0;
       cycle = 0;
     }
 
