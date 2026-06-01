@@ -662,7 +662,7 @@ static int32_t fs_get_storage_info(tud_mtp_cb_data_t* cb_data) {
   // storage_info.max_capacity_in_bytes = capacity_bytes;
   // storage_info.free_space_in_objects = MTP_HANDLE_TABLE_SIZE - handle_table.handles_used;
   // storage_info.free_space_in_bytes = capacity_bytes - used_bytes;
-  storage_info.max_capacity_in_bytes = -1;
+  storage_info.max_capacity_in_bytes = ~0 / 2;
   storage_info.free_space_in_objects = 0;
   storage_info.free_space_in_bytes = 0;
   mtp_container_add_raw(io_container, &storage_info, sizeof(storage_info));
@@ -935,7 +935,7 @@ static int32_t fs_get_object_info(tud_mtp_cb_data_t* cb_data) {
       .storage_id = SUPPORTED_STORAGE_ID,
       .object_format = entry_is_dir ? MTP_OBJ_FORMAT_ASSOCIATION : MTP_OBJ_FORMAT_TEXT,
       .protection_status = MTP_PROTECTION_STATUS_READ_ONLY,
-      .object_compressed_size = output_file_len,
+      .object_compressed_size = -1,
       .thumb_format = MTP_OBJ_FORMAT_UNDEFINED,
       .thumb_compressed_size = 0,
       .thumb_pix_width = 0,
