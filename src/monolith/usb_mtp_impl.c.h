@@ -607,7 +607,8 @@ uint8_t output_file[4096] = {0};
 size_t output_file_len = 0;
 
 uint32_t handle_count = 0;
-int path_depth = 0;
+uint32_t path_depth = 0;
+uint32_t prev_parent_handle = 0;
 
 static int32_t fs_open_close_session(tud_mtp_cb_data_t* cb_data) {
   const mtp_container_command_t* command = cb_data->command_container;
@@ -846,9 +847,9 @@ static int32_t fs_get_object_handles(tud_mtp_cb_data_t* cb_data) {
   if (cb_data->phase == MTP_PHASE_COMMAND) {
 
     if (parent_handle != 0xFFFFFFFF) {
-      int prev_path_depth = (parent_handle - 1) / handle_count;
-      if (prev_path_depth == path_depth) {
+      if (prev_parent_handle != parent_handle) {
         fs_append_output((parent_handle - 1) % handle_count + 1);
+        prev_parent_handle = parent_handle;
         path_depth++;
       }
       // snprintf(babel_log + strlen(babel_log), sizeof(babel_log), "get_obj_handles %lu\n", parent_handle);
@@ -856,6 +857,7 @@ static int32_t fs_get_object_handles(tud_mtp_cb_data_t* cb_data) {
       // snprintf(babel_log + strlen(babel_log), sizeof(babel_log), "get_obj_handles 0\n");
       output_file_len = 0;
       output_file[0] = 0;
+      prev_parent_handle = 0;
       path_depth = 0;
     }
 
